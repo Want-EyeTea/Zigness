@@ -1592,7 +1592,6 @@ cacks
 cacti
 caddy
 cadee
-cadet
 cadge
 cadgy
 cadie
@@ -9642,7 +9641,6 @@ speal
 spean
 spear
 speat
-speck
 specs
 speed
 speel
