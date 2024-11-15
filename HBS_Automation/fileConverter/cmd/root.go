@@ -16,6 +16,7 @@ import (
   "strings"
   "github.com/360EntSecGroup-Skylar/excelize"
   "github.com/fatih/color"
+  "sync"
   //DEBUG
 //  "bufio"
 
@@ -26,7 +27,10 @@ import (
 var green = color.New(color.FgGreen).SprintFunc()
 var red = color.New(color.FgRed).SprintFunc()
 var yellow = color.New(color.FgYellow).SprintFunc()
-
+var pauseMutex sync.Mutex
+var pauseCond = sync.NewCond(&pauseMutex)
+var processingPaused bool
+var outputChannel = make(chan string, 100) // Buffered channel for goroutine messages
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -101,16 +105,63 @@ func Execute() {
     return
   }
 
+  // Create a WaitGroup to track output processing
+  var outputWg sync.WaitGroup
+  outputWg.Add(1)
+
+  // Process output from the outputChannel
+  go func() {
+    defer outputWg.Done() // Mark as done when this goroutine finishes
+    for msg := range outputChannel {
+      pauseMutex.Lock()
+      for processingPaused {
+        pauseCond.Wait() // Block output while waiting for user input
+      }
+      pauseMutex.Unlock()
+      fmt.Print(msg) // Print the message to stdout
+    }
+  }()
+
+  // Setup a WaitGroup and buffered channel to limit concurrent workers for the file conversion process
+  var wg sync.WaitGroup
+  maxWorkers := 4
+  sem := make(chan struct{}, maxWorkers)
+
   // Loop over CSV files and pass them to the 'convertCSVtoXLSX()' function for conversion
   for _, csvFile := range csvFiles {
     baseFileName := filepath.Base(csvFile)
-    outputFile, err := convertCSVtoXLSX(csvFile, xlsxDirectory)
-    if err != nil {
-      fmt.Printf("Error converting file: %s::%v\n", csvFile, err)
-    } else if outputFile != "" {
-      fmt.Printf("%s :>>: %s -> %s\n", baseFileName, outputFile, green("COMPLETED"))
-    }
+    wg.Add(1)
+
+    go func(csvFile string, baseFileName string) {
+      defer wg.Done()
+
+      // Acquire for semaphore slot
+      sem <- struct{}{}
+      defer func() { <-sem }()
+
+      // Wait if paused
+      pauseMutex.Lock()
+      for processingPaused {
+        pauseCond.Wait()
+      }
+      pauseMutex.Unlock()
+
+      // Convert .csv to .xlsx, and output the results
+      outputFile, err := convertCSVtoXLSX(csvFile, xlsxDirectory)
+      if err != nil {
+        outputChannel <- fmt.Sprintf("Error converting file: %s::%v\n", csvFile, err)
+      } else if outputFile != "" {
+        outputChannel <- fmt.Sprintf("%s :>>: %s -> %s\n", baseFileName, outputFile, green("COMPLETED"))
+      }
+    }(csvFile, baseFileName)
   }
+
+  // Wait for all GoRoutines to complete
+  wg.Wait()
+  close(outputChannel) //Signal the output goroutine to finish
+
+  // Wait for the output processing goroutine to complete
+  outputWg.Wait()
 
   fmt.Println("\nFinished!")
 
@@ -156,19 +207,28 @@ func convertCSVtoXLSX(csvFilePath, xlsxDirectory string) (string, error) {
 
   // Check if XLSX file already exists in path
   // Establish variable for if a duplicate file is detected
-  var overwriteCheck string
 
   if _, err := os.Stat(xlsxOutputPath); err == nil {
+    var overwriteCheck string
+
+    pauseMutex.Lock() // Lock mutex to block all new future goroutines
+    processingPaused = true // Pause all current goroutines
     fmt.Printf("\nWARNING: The file %s already exists. Do you want to overwrite it? (y/n): ", yellow(xlsxFileName))
     fmt.Scanln(&overwriteCheck)
-    // White Space
-    fmt.Println("")
+    fmt.Println("") // White space for formatting
     overwriteCheck = strings.ToLower(strings.TrimSpace(overwriteCheck))
+
+    // Resume all other goroutines
+    processingPaused = false
+    pauseMutex.Unlock() // Release the mutex
+    pauseCond.Broadcast()
+
     if overwriteCheck != "y" {
-      fmt.Printf("Skipping file: %s", fileName)
+      fmt.Printf("\nSkipping file: %s\n", fileName)
       // White Space
       fmt.Println("")
       
+
       return "", err
     }
   }
@@ -188,26 +248,4 @@ func convertCSVtoXLSX(csvFilePath, xlsxDirectory string) (string, error) {
 func init() {
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
