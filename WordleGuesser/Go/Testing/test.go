@@ -2,38 +2,33 @@ package main
 
 import (
   "fmt"
-  "github.com/dlclark/regexp2"
-  "os"
-  "bufio"
 )
 
 func main() {
-  filepath := "../availableWords.txt"
-  //pattern := `^(?=.*[l])(?=.*[a])t.{4}(?!.*[es]).*`
-  pattern := `^(?!.*[es])(?=.*[l])(?=.*[a])t.{4}.*`
-
-  query := regexp2.MustCompile(pattern, regexp2.None)
-
-  fmt.Printf("Current Query: %s\n", query)
-
-
-  file , err := os.Open(filepath)
-  if err != nil {
-    fmt.Println("Could not open file: ", err)
+  guessMap := map[int]string {
+    1 : "f",
+    2 : "l",
+    5 : "e",
   }
-
-  scanner := bufio.NewScanner(file)
-  for scanner.Scan() {
-    line := scanner.Text()
-    
-    match, _ := query.MatchString(line)
-    if match {
-      fmt.Println(line)
-    }
-  }
-
-
+  badString := []string {"b", "e", "s"}
+  fmt.Println("BEFORE")
+  fmt.Println(badString)
   
+  lookup := make(map[string]struct{})
+
+  for _, letter := range guessMap {
+    lookup[letter] = struct{}{}
+  }
+
+  for i, letter := range badString {
+    if _, exists := lookup[letter]; exists {
+      fmt.Printf("Found the letter %s in the badString slice, at index %d!\n", letter, i)
+      badString = append(badString[:i], badString[i+1:]...)
+    }
+  }  
+
+  fmt.Println("AFTER:")
+  fmt.Println(badString)
 }
 
 

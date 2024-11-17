@@ -13,56 +13,58 @@ import (
   "WordleGuesser/cmd/builders"
 )
 
+var badLetters []string
+
 // guessCmd represents the guess command
 var guessCmd = &cobra.Command{
 	Use:   "guess",
 	Short: "Prompt user for a guess",
 	Run: func(cmd *cobra.Command, args []string) {
 
-    // Prompt for word
-    var word string           // To hold the current guess 
-    var wordSlice []string     // Slice for parsed guess
-    fmt.Print("Enter word: ")
-    fmt.Scanln(&word)
+    for {
 
-    // Prompt for validation
-    var validation string
-    var validationSlice []string
-    fmt.Print("Enter validation: ")
-    fmt.Scanln(&validation)
+      // Prompt for word
+      var word string           // To hold the current guess 
+      var wordSlice []string     // Slice for parsed guess
+      fmt.Print("Enter word: ")
+      fmt.Scanln(&word)
 
-    // Parsing Word to add to slice
-    for _, letter := range word {
-      // fmt.Printf("%c\n", letter)
-      wordSlice = append(wordSlice, string(letter))
+      // Prompt for validation
+      var validation string
+      var validationSlice []string
+      fmt.Print("Enter validation: ")
+      fmt.Scanln(&validation)
+
+      // Parsing Word to add to slice
+      for _, letter := range word {
+        // fmt.Printf("%c\n", letter)
+        wordSlice = append(wordSlice, string(letter))
+      }
+
+      // Parsing Validation to add to slice
+      for _, num := range validation {
+        validationSlice = append(validationSlice, string(num)) 
+      }
+
+      analyzeGuess(wordSlice, validationSlice)
     }
-
-    // Parsing Validation to add to slice
-    for _, num := range validation {
-      validationSlice = append(validationSlice, string(num)) 
-    }
-
-    analyzeGuess(wordSlice, validationSlice)
-
 	},
 }
 
 
 func analyzeGuess(word, validation []string) {
-  // Slices to hold usable and unusable letters
-  var deadLetters []string
-  var goodLetters []string
+  // Maps for assigning letters and their corresponding positions
+  goodLetters := make(map[int]string)
   correctLetters := make(map[string]int)
 
   // Sorting letters by the associated validation ids
   var x = 0
   for x < len(word) {
     if validation[x] == "0" {
-      deadLetters = append(deadLetters, word[x])
+      badLetters = append(badLetters, word[x])
     } else if validation[x] == "1" {
-      goodLetters = append(goodLetters, word[x])
+      goodLetters[x+1] = word[x]
     } else if validation[x] == "2" {
-      // If validation id is 2 pass to wordBuilder function to associate the letter with a specific position in the word
       correctLetters[word[x]] = x+1
     } else {
       fmt.Printf("Unknown validation id: %s", validation[x])
@@ -70,14 +72,36 @@ func analyzeGuess(word, validation []string) {
     x++
   }
 
-  // Create regex pattern from the series of functions beginning with 'wordBuilder'
-  pattern := wordBuilder(goodLetters, correctLetters, deadLetters)
+  // Check for and remove any 'good letters' from the 'bad letters' set
+  lookup := make(map[string]struct{})
+  for _, letter := range goodLetters {
+    lookup[letter] = struct{}{} 
+  }
 
-  // DEBUG: Print pattern
-  fmt.Println(pattern)
+  // Check for and remove any 'correct letters' from the 'bad letters' set
+  lookup2 := make(map[string]struct{})
+  for cl, _ := range correctLetters {
+    lookup2[cl] = struct{}{}
+  }
+
+  for index, bl := range badLetters {
+    if _, exists := lookup[bl]; exists {
+      badLetters = append(badLetters[:index], badLetters[index+1:]...)
+    } else if _, exists := lookup2[bl]; exists {
+      badLetters = append(badLetters[:index], badLetters[index+1:]...)
+    }
+  }
+
+
+
+  // Create regex pattern from the series of functions beginning with 'wordBuilder'
+  pattern := wordBuilder(goodLetters, correctLetters, badLetters)
+
+// DEBUG: Print pattern
+//  fmt.Println(pattern)
 
   // DEBUG: To read pattern before wordlist is generated
-  bufio.NewReader(os.Stdin).ReadBytes('\n')
+//  bufio.NewReader(os.Stdin).ReadBytes('\n')
 
 
   checkForWords(pattern)
@@ -86,24 +110,13 @@ func analyzeGuess(word, validation []string) {
 
 // Function to check for correct letters, if so determine the position of the correct letters
 // and assign the correct builder function based on position.
-func wordBuilder(goodLetters []string, correctLetters map[string]int, badLetters []string) string {
+func wordBuilder(goodLetters map[int]string, correctLetters map[string]int, badLetters []string) string {
   var pattern string
-
-  // DEBUG: Print current good letters
-  fmt.Println("\nGood Letters:")
-  for _, g := range goodLetters {
-    fmt.Printf("%s", g)
-  }
-
-  // DEBUG: Print the current map of correct letters
-  fmt.Println("\nCorrect Letters")
-  fmt.Println(correctLetters)
 
   // Check for any correct letters and check the position based on the number of correct letters
   _, length := checkForCorrectLetters(correctLetters)
-  fmt.Printf("DEBUG: Length is: %d\n", length)
+  
   if length > 0 {
-    // DEBUG: fmt.Printf("%d correct letter(s) have been guessed.\n", length)
     switch length {
     case 1:
       fmt.Println("1 correct letter has been guessed.")
@@ -113,10 +126,10 @@ func wordBuilder(goodLetters []string, correctLetters map[string]int, badLetters
       pattern = checkPosition_TwoLetters(correctLetters, goodLetters, badLetters)
     case 3:
       fmt.Println("3 correct letters have been guessed.")
-       pattern = checkPosition_ThreeLetters(correctLetters, goodLetters)
+       pattern = checkPosition_ThreeLetters(correctLetters, goodLetters, badLetters)
     case 4:
       fmt.Println("4 correct letters have been guessed.")
-      pattern = checkPosition_FourLetters(correctLetters, goodLetters)
+      pattern = checkPosition_FourLetters(correctLetters, goodLetters, badLetters)
     default:
       // At this point the Wordle should be solvable
       fmt.Println("You solved the Wordle, why are you still here?")
@@ -131,7 +144,7 @@ func wordBuilder(goodLetters []string, correctLetters map[string]int, badLetters
 // The following 4 functions are to parse the position of the correct letters and assign them accordingly
 //
 // Determine the position of the correct letter and assign the correct regexbuilder function
-func checkPosition_OneLetter(correctLetters map[string]int, goodLetters []string, badLetters []string) string {
+func checkPosition_OneLetter(correctLetters map[string]int, goodLetters map[int]string, badLetters []string) string {
   var pattern string
   for letter, position := range correctLetters {
     switch position {
@@ -150,9 +163,7 @@ func checkPosition_OneLetter(correctLetters map[string]int, goodLetters []string
   return pattern
 }
 
-func checkPosition_TwoLetters(correctLetters map[string]int, goodLetters []string, badLetters []string) string {
-  // DEBUG: Not seeing bad letters
-  fmt.Println("BAD LETTERS @ checkPosition_TwoLetters()")
+func checkPosition_TwoLetters(correctLetters map[string]int, goodLetters map[int]string, badLetters []string) string {
   for _, letter := range badLetters {
     fmt.Printf("%s\n", letter)
   }
@@ -176,25 +187,25 @@ func checkPosition_TwoLetters(correctLetters map[string]int, goodLetters []strin
   case matches(letterPositions, []int{1,4}):
     pattern = builders.FirstAndFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,5}):
-    pattern = builders.FirstAndFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstAndFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,3}):
-    pattern = builders.SecondAndThird(goodLetters, lettersForRegex)
+    pattern = builders.SecondAndThird(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,4}):
-    pattern = builders.SecondAndFourth(goodLetters, lettersForRegex)
+    pattern = builders.SecondAndFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,5}):
-    pattern = builders.SecondAndFifth(goodLetters, lettersForRegex)
+    pattern = builders.SecondAndFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{3,4}):
-    pattern = builders.ThirdAndFourth(goodLetters, lettersForRegex)
+    pattern = builders.ThirdAndFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{3,5}):
     pattern = builders.ThirdAndFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{4,5}):
-    pattern = builders.FourthAndFifth(goodLetters, lettersForRegex)
+    pattern = builders.FourthAndFifth(goodLetters, lettersForRegex, badLetters)
   }
   return pattern
 }
 
 
-func checkPosition_ThreeLetters(correctLetters map[string]int, goodLetters []string) string {
+func checkPosition_ThreeLetters(correctLetters map[string]int, goodLetters map[int]string, badLetters []string) string {
   var pattern string
   var letterPositions []int
   var lettersForRegex []string
@@ -206,31 +217,31 @@ func checkPosition_ThreeLetters(correctLetters map[string]int, goodLetters []str
 
   switch {
   case matches(letterPositions, []int{1,2,3}):
-    pattern = builders.FirstSecondThird(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondThird(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,2,4}):
-    pattern = builders.FirstSecondFourth(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,2,5}):
-    pattern = builders.FirstSecondFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,3,4}):
-    pattern = builders.FirstThirdFourth(goodLetters, lettersForRegex)
+    pattern = builders.FirstThirdFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,3,5}):
-    pattern = builders.FirstThirdFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstThirdFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,4,5}):
-    pattern = builders.FirstFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstFourthFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,3,4}):
-    pattern = builders.SecondThirdFourth(goodLetters, lettersForRegex)
+    pattern = builders.SecondThirdFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,3,5}):
-    pattern = builders.SecondThirdFifth(goodLetters, lettersForRegex)
+    pattern = builders.SecondThirdFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,4,5}):
-    pattern = builders.SecondFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.SecondFourthFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{3,4,5}):
-    pattern = builders.ThirdFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.ThirdFourthFifth(goodLetters, lettersForRegex, badLetters)
   }
   return pattern 
 }
 
 
-func checkPosition_FourLetters(correctLetters map[string]int, goodLetters []string) string {
+func checkPosition_FourLetters(correctLetters map[string]int, goodLetters map[int]string, badLetters []string) string {
   var pattern string
   var letterPositions []int
   var lettersForRegex []string
@@ -242,15 +253,15 @@ func checkPosition_FourLetters(correctLetters map[string]int, goodLetters []stri
 
   switch {
   case matches(letterPositions, []int{1,2,3,4}):
-    pattern = builders.FirstSecondThirdFourth(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondThirdFourth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,2,3,5}):
-    pattern = builders.FirstSecondThirdFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondThirdFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,2,4,5}):
-    pattern = builders.FirstSecondFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstSecondFourthFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{1,3,4,5}):
-    pattern = builders.FirstThirdFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.FirstThirdFourthFifth(goodLetters, lettersForRegex, badLetters)
   case matches(letterPositions, []int{2,3,4,5}):
-    pattern = builders.SecondThirdFourthFifth(goodLetters, lettersForRegex)
+    pattern = builders.SecondThirdFourthFifth(goodLetters, lettersForRegex, badLetters)
   }
   return pattern
 }
@@ -298,8 +309,6 @@ func checkForWords(pattern string) {
     if match {
       fmt.Println(line)
     }
-    // DEBUG: Print each line-by-line
-    //fmt.Println(scanner.Text())
 
     // Check for errors during scanning
     if err := scanner.Err(); err != nil {
